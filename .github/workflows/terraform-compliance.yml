@@ -36,7 +36,11 @@ on:
         default: "terraform.security,terraform.naming,terraform.best_practices"
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC authentication'
-        required: true
+        required: false
+        type: string
+      aws_account_id:
+        description: 'AWS Account ID (if not provided, will attempt to detect from repository variables)'
+        required: false
         type: string
       aws_region:
         description: 'AWS region for authentication and backend'
@@ -66,10 +70,91 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Set default values for direct triggers
-        id: set-defaults
+      - name: Load Configuration and Set Defaults
+        id: load-config
         run: |
-          echo "terraform_dir=${{ inputs.terraform_dir || '.' }}" >> $GITHUB_OUTPUT
+          # Check if pipeline-config.json exists and read terraform directory from it
+          if [ -f "pipeline-config.json" ]; then
+            configJson=$(cat pipeline-config.json)
+            terraform_dir_from_config=$(echo $configJson | jq -r '.workspace')
+            echo "Found pipeline-config.json with workspace: $terraform_dir_from_config"
+            echo "terraform_dir=${terraform_dir_from_config}" >> $GITHUB_OUTPUT
+          else
+            echo "No pipeline-config.json found, using input or default"
+            echo "terraform_dir=${{ inputs.terraform_dir || '.' }}" >> $GITHUB_OUTPUT
+          fi
+          
+          # Determine environment based on target branch
+          target_branch="${{ github.event.pull_request.base.ref || github.ref_name }}"
+          echo "Target branch: $target_branch"
+          
+          case "$target_branch" in
+            "main"|"master")
+              environment="prod"
+              ;;
+            "test")
+              environment="test"
+              ;;
+            "develop"|"dev")
+              environment="dev"
+              ;;
+            *)
+              environment="dev"  # Default to dev for other branches
+              ;;
+          esac
+          
+          echo "Detected environment: $environment"
+          echo "environment=$environment" >> $GITHUB_OUTPUT
+          
+          # Determine AWS Role ARN dynamically based on environment
+          if [ -n "${{ inputs.aws_role_arn }}" ]; then
+            echo "Using provided AWS role ARN: ${{ inputs.aws_role_arn }}"
+            echo "aws_role_arn=${{ inputs.aws_role_arn }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ inputs.aws_account_id }}" ]; then
+            aws_role="arn:aws:iam::${{ inputs.aws_account_id }}:role/gha-oidc-role"
+            echo "Building AWS role ARN from account ID input: $aws_role"
+            echo "aws_role_arn=$aws_role" >> $GITHUB_OUTPUT
+          else
+            # Try environment-specific variables first, then fall back to generic
+            case "$environment" in
+              "prod")
+                if [ -n "${{ vars.AWS_ACCOUNT_ID_PROD }}" ]; then
+                  aws_role="arn:aws:iam::${{ vars.AWS_ACCOUNT_ID_PROD }}:role/gha-oidc-role"
+                  echo "Using prod account ID from variable: $aws_role"
+                elif [ -n "${{ vars.AWS_ACCOUNT_ID }}" ]; then
+                  aws_role="arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-oidc-role"
+                  echo "Using generic account ID for prod: $aws_role"
+                fi
+                ;;
+              "test")
+                if [ -n "${{ vars.AWS_ACCOUNT_ID_TEST }}" ]; then
+                  aws_role="arn:aws:iam::${{ vars.AWS_ACCOUNT_ID_TEST }}:role/gha-oidc-role"
+                  echo "Using test account ID from variable: $aws_role"
+                elif [ -n "${{ vars.AWS_ACCOUNT_ID }}" ]; then
+                  aws_role="arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-oidc-role"
+                  echo "Using generic account ID for test: $aws_role"
+                fi
+                ;;
+              "dev")
+                if [ -n "${{ vars.AWS_ACCOUNT_ID_DEV }}" ]; then
+                  aws_role="arn:aws:iam::${{ vars.AWS_ACCOUNT_ID_DEV }}:role/gha-oidc-role"
+                  echo "Using dev account ID from variable: $aws_role"
+                elif [ -n "${{ vars.AWS_ACCOUNT_ID }}" ]; then
+                  aws_role="arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-oidc-role"
+                  echo "Using generic account ID for dev: $aws_role"
+                fi
+                ;;
+            esac
+            
+            if [ -n "$aws_role" ]; then
+              echo "aws_role_arn=$aws_role" >> $GITHUB_OUTPUT
+            else
+              echo "No AWS account ID found for environment $environment - compliance check will run without AWS authentication"
+              echo "aws_role_arn=" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+          # Set other defaults
           echo "policies_repo=${{ inputs.policies_repo || 'c-c-t/terraform-policies' }}" >> $GITHUB_OUTPUT
           echo "policies_ref=${{ inputs.policies_ref || 'main' }}" >> $GITHUB_OUTPUT
           echo "conftest_version=${{ inputs.conftest_version || '0.46.0' }}" >> $GITHUB_OUTPUT
@@ -80,49 +165,49 @@ jobs:
       - name: Checkout policies repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.set-defaults.outputs.policies_repo }}
-          ref: ${{ steps.set-defaults.outputs.policies_ref }}
+          repository: ${{ steps.load-config.outputs.policies_repo }}
+          ref: ${{ steps.load-config.outputs.policies_ref }}
           path: .conftest-policies
           token: ${{ github.token }}
           
       - name: Configure AWS Credentials
-        if: ${{ inputs.aws_role_arn != '' }}
+        if: ${{ steps.load-config.outputs.aws_role_arn != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ inputs.aws_role_arn }}
-          aws-region: ${{ steps.set-defaults.outputs.aws_region }}
+          role-to-assume: ${{ steps.load-config.outputs.aws_role_arn }}
+          aws-region: ${{ steps.load-config.outputs.aws_region }}
           role-session-name: TerraformCompliance
           
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ steps.set-defaults.outputs.terraform_version }}
+          terraform_version: ${{ steps.load-config.outputs.terraform_version }}
           
       - name: Setup Conftest
         run: |
-          wget https://github.com/open-policy-agent/conftest/releases/download/v${{ steps.set-defaults.outputs.conftest_version }}/conftest_${{ steps.set-defaults.outputs.conftest_version }}_Linux_x86_64.tar.gz
-          tar xzf conftest_${{ steps.set-defaults.outputs.conftest_version }}_Linux_x86_64.tar.gz
+          wget https://github.com/open-policy-agent/conftest/releases/download/v${{ steps.load-config.outputs.conftest_version }}/conftest_${{ steps.load-config.outputs.conftest_version }}_Linux_x86_64.tar.gz
+          tar xzf conftest_${{ steps.load-config.outputs.conftest_version }}_Linux_x86_64.tar.gz
           sudo mv conftest /usr/local/bin
           conftest --version
           
       - name: Terraform Init
-        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
+        working-directory: ${{ steps.load-config.outputs.terraform_dir }}
         env:
-          AWS_REGION: ${{ steps.set-defaults.outputs.aws_region }}
+          AWS_REGION: ${{ steps.load-config.outputs.aws_region }}
         run: terraform init -backend=false
         
       - name: Generate Terraform Plan
-        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
+        working-directory: ${{ steps.load-config.outputs.terraform_dir }}
         env:
-          AWS_REGION: ${{ steps.set-defaults.outputs.aws_region }}
+          AWS_REGION: ${{ steps.load-config.outputs.aws_region }}
         run: |
           terraform plan -out=tfplan.binary
           terraform show -json tfplan.binary > tfplan.json
           
       - name: Run Conftest - Security Policies
-        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
+        working-directory: ${{ steps.load-config.outputs.terraform_dir }}
         run: |
-          IFS=',' read -ra NAMESPACES <<< "${{ steps.set-defaults.outputs.policy_namespaces }}"
+          IFS=',' read -ra NAMESPACES <<< "${{ steps.load-config.outputs.policy_namespaces }}"
           for namespace in "${NAMESPACES[@]}"; do
             echo "Testing namespace: $namespace"
             conftest test tfplan.json \
@@ -132,7 +217,7 @@ jobs:
           done
           
       - name: Run Conftest - Generate Report
-        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
+        working-directory: ${{ steps.load-config.outputs.terraform_dir }}
         run: |
           # Generate JSON report for programmatic processing
           conftest test tfplan.json \
@@ -150,9 +235,9 @@ jobs:
         with:
           name: conftest-reports-${{ github.run_id }}
           path: |
-            ${{ steps.set-defaults.outputs.terraform_dir }}/conftest-report.json
-            ${{ steps.set-defaults.outputs.terraform_dir }}/conftest-report.txt
-            ${{ steps.set-defaults.outputs.terraform_dir }}/tfplan.json
+            ${{ steps.load-config.outputs.terraform_dir }}/conftest-report.json
+            ${{ steps.load-config.outputs.terraform_dir }}/conftest-report.txt
+            ${{ steps.load-config.outputs.terraform_dir }}/tfplan.json
           retention-days: 30
           
       - name: Comment PR with Results
@@ -164,7 +249,7 @@ jobs:
             const path = require('path');
             
             try {
-              const reportPath = path.join('${{ steps.set-defaults.outputs.terraform_dir }}', 'conftest-report.txt');
+              const reportPath = path.join('${{ steps.load-config.outputs.terraform_dir }}', 'conftest-report.txt');
               const report = fs.readFileSync(reportPath, 'utf8');
               
               const body = `## Terraform Compliance Check Results
