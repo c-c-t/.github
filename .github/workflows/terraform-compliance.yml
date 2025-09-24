@@ -43,6 +43,14 @@ on:
         required: false
         type: string
         default: "us-east-1"
+  pull_request:
+    branches:
+      - main
+      - develop
+      - test
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
 
 permissions:
   id-token: write
@@ -58,51 +66,63 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
+      - name: Set default values for direct triggers
+        id: set-defaults
+        run: |
+          echo "terraform_dir=${{ inputs.terraform_dir || '.' }}" >> $GITHUB_OUTPUT
+          echo "policies_repo=${{ inputs.policies_repo || 'c-c-t/terraform-policies' }}" >> $GITHUB_OUTPUT
+          echo "policies_ref=${{ inputs.policies_ref || 'main' }}" >> $GITHUB_OUTPUT
+          echo "conftest_version=${{ inputs.conftest_version || '0.46.0' }}" >> $GITHUB_OUTPUT
+          echo "terraform_version=${{ inputs.terraform_version || '1.11.3' }}" >> $GITHUB_OUTPUT
+          echo "policy_namespaces=${{ inputs.policy_namespaces || 'terraform.security,terraform.naming,terraform.best_practices' }}" >> $GITHUB_OUTPUT
+          echo "aws_region=${{ inputs.aws_region || 'us-east-1' }}" >> $GITHUB_OUTPUT
+          
       - name: Checkout policies repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.policies_repo }}
-          ref: ${{ inputs.policies_ref }}
+          repository: ${{ steps.set-defaults.outputs.policies_repo }}
+          ref: ${{ steps.set-defaults.outputs.policies_ref }}
           path: .conftest-policies
           token: ${{ github.token }}
           
       - name: Configure AWS Credentials
+        if: ${{ inputs.aws_role_arn != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ inputs.aws_role_arn }}
-          aws-region: ${{ inputs.aws_region }}
+          aws-region: ${{ steps.set-defaults.outputs.aws_region }}
           role-session-name: TerraformCompliance
           
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ inputs.terraform_version }}
+          terraform_version: ${{ steps.set-defaults.outputs.terraform_version }}
           
       - name: Setup Conftest
         run: |
-          wget https://github.com/open-policy-agent/conftest/releases/download/v${{ inputs.conftest_version }}/conftest_${{ inputs.conftest_version }}_Linux_x86_64.tar.gz
-          tar xzf conftest_${{ inputs.conftest_version }}_Linux_x86_64.tar.gz
+          wget https://github.com/open-policy-agent/conftest/releases/download/v${{ steps.set-defaults.outputs.conftest_version }}/conftest_${{ steps.set-defaults.outputs.conftest_version }}_Linux_x86_64.tar.gz
+          tar xzf conftest_${{ steps.set-defaults.outputs.conftest_version }}_Linux_x86_64.tar.gz
           sudo mv conftest /usr/local/bin
           conftest --version
           
       - name: Terraform Init
-        working-directory: ${{ inputs.terraform_dir }}
+        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
         env:
-          AWS_REGION: ${{ inputs.aws_region }}
+          AWS_REGION: ${{ steps.set-defaults.outputs.aws_region }}
         run: terraform init -backend=false
         
       - name: Generate Terraform Plan
-        working-directory: ${{ inputs.terraform_dir }}
+        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
         env:
-          AWS_REGION: ${{ inputs.aws_region }}
+          AWS_REGION: ${{ steps.set-defaults.outputs.aws_region }}
         run: |
           terraform plan -out=tfplan.binary
           terraform show -json tfplan.binary > tfplan.json
           
       - name: Run Conftest - Security Policies
-        working-directory: ${{ inputs.terraform_dir }}
+        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
         run: |
-          IFS=',' read -ra NAMESPACES <<< "${{ inputs.policy_namespaces }}"
+          IFS=',' read -ra NAMESPACES <<< "${{ steps.set-defaults.outputs.policy_namespaces }}"
           for namespace in "${NAMESPACES[@]}"; do
             echo "Testing namespace: $namespace"
             conftest test tfplan.json \
@@ -112,7 +132,7 @@ jobs:
           done
           
       - name: Run Conftest - Generate Report
-        working-directory: ${{ inputs.terraform_dir }}
+        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
         run: |
           # Generate JSON report for programmatic processing
           conftest test tfplan.json \
@@ -130,9 +150,9 @@ jobs:
         with:
           name: conftest-reports-${{ github.run_id }}
           path: |
-            ${{ inputs.terraform_dir }}/conftest-report.json
-            ${{ inputs.terraform_dir }}/conftest-report.txt
-            ${{ inputs.terraform_dir }}/tfplan.json
+            ${{ steps.set-defaults.outputs.terraform_dir }}/conftest-report.json
+            ${{ steps.set-defaults.outputs.terraform_dir }}/conftest-report.txt
+            ${{ steps.set-defaults.outputs.terraform_dir }}/tfplan.json
           retention-days: 30
           
       - name: Comment PR with Results
@@ -144,7 +164,7 @@ jobs:
             const path = require('path');
             
             try {
-              const reportPath = path.join('${{ inputs.terraform_dir }}', 'conftest-report.txt');
+              const reportPath = path.join('${{ steps.set-defaults.outputs.terraform_dir }}', 'conftest-report.txt');
               const report = fs.readFileSync(reportPath, 'utf8');
               
               const body = `## Terraform Compliance Check Results
