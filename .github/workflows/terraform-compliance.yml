@@ -223,7 +223,6 @@ jobs:
         run: |
           terraform init \
             -backend-config="bucket=${{ steps.load-config.outputs.s3_bucket }}" \
-            -backend-config="key=${{ steps.load-config.outputs.terraform_dir }}/terraform.tfstate" \
             -backend-config="region=us-east-1" \
             -backend-config="key=terraform.tfstate"
           terraform workspace select -or-create ${{ steps.load-config.outputs.terraform_dir }}
