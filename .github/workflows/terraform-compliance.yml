@@ -23,7 +23,7 @@ on:
         description: 'Conftest version to use'
         required: false
         type: string
-        default: "0.46.0"
+        default: "0.49.1"
       terraform_version:
         description: 'Terraform version to use'
         required: false
@@ -164,7 +164,7 @@ jobs:
           # Set other defaults
           echo "policies_repo=${{ inputs.policies_repo || 'c-c-t/terraform-policies' }}" >> $GITHUB_OUTPUT
           echo "policies_ref=${{ inputs.policies_ref || 'main' }}" >> $GITHUB_OUTPUT
-          echo "conftest_version=${{ inputs.conftest_version || '0.46.0' }}" >> $GITHUB_OUTPUT
+          echo "conftest_version=${{ inputs.conftest_version || '0.49.1' }}" >> $GITHUB_OUTPUT
           echo "terraform_version=${{ inputs.terraform_version || '1.11.3' }}" >> $GITHUB_OUTPUT
           echo "policy_namespaces=${{ inputs.policy_namespaces || 'terraform.security,terraform.naming,terraform.best_practices' }}" >> $GITHUB_OUTPUT
           echo "aws_region=${{ inputs.aws_region || 'us-east-1' }}" >> $GITHUB_OUTPUT
