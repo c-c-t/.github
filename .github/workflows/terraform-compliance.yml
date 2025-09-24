@@ -1,0 +1,192 @@
+# .github/.github/workflows/terraform-compliance.yml
+name: Terraform Compliance Check
+
+on:
+  workflow_call:
+    inputs:
+      terraform_dir:
+        description: 'Directory containing Terraform files'
+        required: false
+        type: string
+        default: "."
+      policies_repo:
+        description: 'Repository containing OPA policies'
+        required: false
+        type: string
+        default: "c-c-t/terraform-policies"
+      policies_ref:
+        description: 'Branch/tag of policies repo to use'
+        required: false
+        type: string
+        default: "main"
+      conftest_version:
+        description: 'Conftest version to use'
+        required: false
+        type: string
+        default: "0.46.0"
+      terraform_version:
+        description: 'Terraform version to use'
+        required: false
+        type: string
+        default: "1.11.3"
+      policy_namespaces:
+        description: 'Comma-separated list of policy namespaces to test'
+        required: false
+        type: string
+        default: "terraform.security,terraform.naming,terraform.best_practices"
+      aws_role_arn:
+        description: 'AWS IAM Role ARN for OIDC authentication'
+        required: true
+        type: string
+      aws_region:
+        description: 'AWS region for authentication and backend'
+        required: false
+        type: string
+        default: "us-east-1"
+  pull_request:
+    branches:
+      - main
+      - develop
+      - test
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-compliance:
+    name: Terraform Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Set default values for direct triggers
+        id: set-defaults
+        run: |
+          echo "terraform_dir=${{ inputs.terraform_dir || '.' }}" >> $GITHUB_OUTPUT
+          echo "policies_repo=${{ inputs.policies_repo || 'c-c-t/terraform-policies' }}" >> $GITHUB_OUTPUT
+          echo "policies_ref=${{ inputs.policies_ref || 'main' }}" >> $GITHUB_OUTPUT
+          echo "conftest_version=${{ inputs.conftest_version || '0.46.0' }}" >> $GITHUB_OUTPUT
+          echo "terraform_version=${{ inputs.terraform_version || '1.11.3' }}" >> $GITHUB_OUTPUT
+          echo "policy_namespaces=${{ inputs.policy_namespaces || 'terraform.security,terraform.naming,terraform.best_practices' }}" >> $GITHUB_OUTPUT
+          echo "aws_region=${{ inputs.aws_region || 'us-east-1' }}" >> $GITHUB_OUTPUT
+          
+      - name: Checkout policies repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.set-defaults.outputs.policies_repo }}
+          ref: ${{ steps.set-defaults.outputs.policies_ref }}
+          path: .conftest-policies
+          token: ${{ github.token }}
+          
+      - name: Configure AWS Credentials
+        if: ${{ inputs.aws_role_arn != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          aws-region: ${{ steps.set-defaults.outputs.aws_region }}
+          role-session-name: TerraformCompliance
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ steps.set-defaults.outputs.terraform_version }}
+          
+      - name: Setup Conftest
+        run: |
+          wget https://github.com/open-policy-agent/conftest/releases/download/v${{ steps.set-defaults.outputs.conftest_version }}/conftest_${{ steps.set-defaults.outputs.conftest_version }}_Linux_x86_64.tar.gz
+          tar xzf conftest_${{ steps.set-defaults.outputs.conftest_version }}_Linux_x86_64.tar.gz
+          sudo mv conftest /usr/local/bin
+          conftest --version
+          
+      - name: Terraform Init
+        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
+        env:
+          AWS_REGION: ${{ steps.set-defaults.outputs.aws_region }}
+        run: terraform init -backend=false
+        
+      - name: Generate Terraform Plan
+        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
+        env:
+          AWS_REGION: ${{ steps.set-defaults.outputs.aws_region }}
+        run: |
+          terraform plan -out=tfplan.binary
+          terraform show -json tfplan.binary > tfplan.json
+          
+      - name: Run Conftest - Security Policies
+        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
+        run: |
+          IFS=',' read -ra NAMESPACES <<< "${{ steps.set-defaults.outputs.policy_namespaces }}"
+          for namespace in "${NAMESPACES[@]}"; do
+            echo "Testing namespace: $namespace"
+            conftest test tfplan.json \
+              --policy ../.conftest-policies \
+              --namespace "$namespace" \
+              --output table
+          done
+          
+      - name: Run Conftest - Generate Report
+        working-directory: ${{ steps.set-defaults.outputs.terraform_dir }}
+        run: |
+          # Generate JSON report for programmatic processing
+          conftest test tfplan.json \
+            --policy ../.conftest-policies \
+            --output json > conftest-report.json
+            
+          # Generate human-readable report
+          conftest test tfplan.json \
+            --policy ../.conftest-policies \
+            --output table > conftest-report.txt
+            
+      - name: Upload Conftest Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conftest-reports-${{ github.run_id }}
+          path: |
+            ${{ steps.set-defaults.outputs.terraform_dir }}/conftest-report.json
+            ${{ steps.set-defaults.outputs.terraform_dir }}/conftest-report.txt
+            ${{ steps.set-defaults.outputs.terraform_dir }}/tfplan.json
+          retention-days: 30
+          
+      - name: Comment PR with Results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            try {
+              const reportPath = path.join('${{ steps.set-defaults.outputs.terraform_dir }}', 'conftest-report.txt');
+              const report = fs.readFileSync(reportPath, 'utf8');
+              
+              const body = `## Terraform Compliance Check Results
+              
+              <details>
+              <summary>Click to expand compliance report</summary>
+              
+              \`\`\`
+              ${report}
+              \`\`\`
+              
+              </details>
+              
+              Full reports available in workflow artifacts.
+              `;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            } catch (error) {
+              console.log('Could not read report file:', error.message);
+            }
