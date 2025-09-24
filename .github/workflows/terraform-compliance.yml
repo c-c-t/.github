@@ -106,6 +106,13 @@ jobs:
           echo "Detected environment: $environment"
           echo "environment=$environment" >> $GITHUB_OUTPUT
           
+          # Debug: Show available variables
+          echo "Debug: Available AWS variables:"
+          echo "AWS_ACCOUNT_ID_DEV = '${{ vars.AWS_ACCOUNT_ID_DEV }}'"
+          echo "AWS_ACCOUNT_ID_TEST = '${{ vars.AWS_ACCOUNT_ID_TEST }}'"
+          echo "AWS_ACCOUNT_ID_PROD = '${{ vars.AWS_ACCOUNT_ID_PROD }}'"
+          echo "AWS_ACCOUNT_ID = '${{ vars.AWS_ACCOUNT_ID }}'"
+          
           # Determine AWS Role ARN dynamically based on environment
           if [ -n "${{ inputs.aws_role_arn }}" ]; then
             echo "Using provided AWS role ARN: ${{ inputs.aws_role_arn }}"
@@ -194,7 +201,7 @@ jobs:
         working-directory: ${{ steps.load-config.outputs.terraform_dir }}
         env:
           AWS_REGION: ${{ steps.load-config.outputs.aws_region }}
-        run: terraform init -backend=false
+        run: terraform init
         
       - name: Generate Terraform Plan
         working-directory: ${{ steps.load-config.outputs.terraform_dir }}
