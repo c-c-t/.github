@@ -169,6 +169,25 @@ jobs:
           echo "policy_namespaces=${{ inputs.policy_namespaces || 'terraform.security,terraform.naming,terraform.best_practices' }}" >> $GITHUB_OUTPUT
           echo "aws_region=${{ inputs.aws_region || 'us-east-1' }}" >> $GITHUB_OUTPUT
           
+          # Set environment-specific S3 backend bucket
+          case "$environment" in
+            "prod")
+              s3_bucket="cct-i24-terraform-state"
+              ;;
+            "test")
+              s3_bucket="cct-i24-terraform-state-test"
+              ;;
+            "dev")
+              s3_bucket="cct-i24-terraform-state-dev"
+              ;;
+            *)
+              s3_bucket="cct-i24-terraform-state-dev"  # Default to dev
+              ;;
+          esac
+          
+          echo "s3_bucket=$s3_bucket" >> $GITHUB_OUTPUT
+          echo "Using S3 backend bucket: $s3_bucket"
+          
       - name: Checkout policies repository
         uses: actions/checkout@v4
         with:
@@ -201,7 +220,12 @@ jobs:
         working-directory: ${{ steps.load-config.outputs.terraform_dir }}
         env:
           AWS_REGION: ${{ steps.load-config.outputs.aws_region }}
-        run: terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ steps.load-config.outputs.s3_bucket }}" \
+            -backend-config="key=${{ steps.load-config.outputs.terraform_dir }}/terraform.tfstate" \
+            -backend-config="region=us-east-1"
+          terraform workspace select -or-create ${{ steps.load-config.outputs.terraform_dir }}
         
       - name: Generate Terraform Plan
         working-directory: ${{ steps.load-config.outputs.terraform_dir }}
