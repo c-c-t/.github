@@ -166,7 +166,7 @@ jobs:
           echo "policies_ref=${{ inputs.policies_ref || 'main' }}" >> $GITHUB_OUTPUT
           echo "conftest_version=${{ inputs.conftest_version || '0.49.1' }}" >> $GITHUB_OUTPUT
           echo "terraform_version=${{ inputs.terraform_version || '1.11.3' }}" >> $GITHUB_OUTPUT
-          echo "policy_namespaces=${{ inputs.policy_namespaces || 'terraform.security,terraform.naming,terraform.best_practices' }}" >> $GITHUB_OUTPUT
+          echo "policy_namespaces=${{ inputs.policy_namespaces || 'terraform.module_requirements' }}" >> $GITHUB_OUTPUT
           echo "aws_region=${{ inputs.aws_region || 'us-east-1' }}" >> $GITHUB_OUTPUT
           
           # Set environment-specific S3 backend bucket
