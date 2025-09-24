@@ -232,7 +232,28 @@ jobs:
         env:
           AWS_REGION: ${{ steps.load-config.outputs.aws_region }}
         run: |
-          terraform plan -out=tfplan.binary
+          # Determine AWS account ID for the environment
+          case "${{ steps.load-config.outputs.environment }}" in
+            "prod")
+              aws_account_id="${{ vars.AWS_ACCOUNT_ID_PROD || vars.AWS_ACCOUNT_ID }}"
+              ;;
+            "test")
+              aws_account_id="${{ vars.AWS_ACCOUNT_ID_TEST || vars.AWS_ACCOUNT_ID }}"
+              ;;
+            "dev")
+              aws_account_id="${{ vars.AWS_ACCOUNT_ID_DEV || vars.AWS_ACCOUNT_ID }}"
+              ;;
+            *)
+              aws_account_id="${{ vars.AWS_ACCOUNT_ID_DEV || vars.AWS_ACCOUNT_ID }}"
+              ;;
+          esac
+          
+          # Generate terraform plan with environment-specific variables
+          terraform plan -out=tfplan.binary \
+            -var-file=variables/${{ steps.load-config.outputs.environment }}.tfvars \
+            -var="environment=${{ steps.load-config.outputs.environment }}" \
+            -var="aws_account=${aws_account_id}"
+            
           terraform show -json tfplan.binary > tfplan.json
           
       - name: Run Conftest - Security Policies
