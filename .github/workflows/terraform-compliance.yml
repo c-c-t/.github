@@ -1,5 +1,5 @@
 # .github/.github/workflows/terraform-compliance.yml
-name: Terraform Compliance Check
+name: Terraform Plan & Compliance Check
 
 on:
   workflow_call:
