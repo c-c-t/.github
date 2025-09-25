@@ -1,5 +1,5 @@
 # .github/.github/workflows/terraform-compliance.yml
-name: Terraform Compliance Check
+name: Terraform Plan & Compliance Check
 
 on:
   workflow_call:
@@ -59,7 +59,6 @@ on:
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
 
 jobs:
   terraform-compliance:
@@ -259,6 +258,12 @@ jobs:
       - name: Run Conftest - Security Policies
         working-directory: ${{ steps.load-config.outputs.terraform_dir }}
         run: |
+          echo "Available policy files:"
+          find ../.conftest-policies -name "*.rego" -type f
+          echo ""
+          echo "Testing policy namespaces: ${{ steps.load-config.outputs.policy_namespaces }}"
+          echo ""
+          
           IFS=',' read -ra NAMESPACES <<< "${{ steps.load-config.outputs.policy_namespaces }}"
           for namespace in "${NAMESPACES[@]}"; do
             echo "Testing namespace: $namespace"
@@ -291,39 +296,3 @@ jobs:
             ${{ steps.load-config.outputs.terraform_dir }}/conftest-report.txt
             ${{ steps.load-config.outputs.terraform_dir }}/tfplan.json
           retention-days: 30
-          
-      - name: Comment PR with Results
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            
-            try {
-              const reportPath = path.join('${{ steps.load-config.outputs.terraform_dir }}', 'conftest-report.txt');
-              const report = fs.readFileSync(reportPath, 'utf8');
-              
-              const body = `## Terraform Compliance Check Results
-              
-              <details>
-              <summary>Click to expand compliance report</summary>
-              
-              \`\`\`
-              ${report}
-              \`\`\`
-              
-              </details>
-              
-              Full reports available in workflow artifacts.
-              `;
-              
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: body
-              });
-            } catch (error) {
-              console.log('Could not read report file:', error.message);
-            }
