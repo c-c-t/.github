@@ -47,6 +47,14 @@ on:
         required: false
         type: string
         default: "us-east-1"
+      terraform_policies_token:
+        description: 'Personal Access Token for accessing private terraform-policies repository'
+        required: false
+        type: string
+    secrets:
+      TERRAFORM_POLICIES_TOKEN:
+        description: 'Personal Access Token for accessing private terraform-policies repository'
+        required: false
   pull_request:
     branches:
       - main
@@ -193,7 +201,7 @@ jobs:
           repository: ${{ steps.load-config.outputs.policies_repo }}
           ref: ${{ steps.load-config.outputs.policies_ref }}
           path: .conftest-policies
-          token: ${{ github.token }}
+          token: ${{ secrets.TERRAFORM_POLICIES_TOKEN || inputs.TERRAFORM_POLICIES_TOKEN || github.token }}
           
       - name: Configure AWS Credentials
         if: ${{ steps.load-config.outputs.aws_role_arn != '' }}
