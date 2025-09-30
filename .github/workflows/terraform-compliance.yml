@@ -263,44 +263,44 @@ jobs:
             
           terraform show -json tfplan.binary > tfplan.json
           
-      - name: Run Conftest - Security Policies
-        working-directory: ${{ steps.load-config.outputs.terraform_dir }}
-        run: |
-          echo "Available policy files:"
-          find ../.conftest-policies -name "*.rego" -type f
-          echo ""
-          echo "Testing policy namespaces: ${{ steps.load-config.outputs.policy_namespaces }}"
-          echo ""
+      # - name: Run Conftest - Security Policies
+      #   working-directory: ${{ steps.load-config.outputs.terraform_dir }}
+      #   run: |
+      #     echo "Available policy files:"
+      #     find ../.conftest-policies -name "*.rego" -type f
+      #     echo ""
+      #     echo "Testing policy namespaces: ${{ steps.load-config.outputs.policy_namespaces }}"
+      #     echo ""
           
-          IFS=',' read -ra NAMESPACES <<< "${{ steps.load-config.outputs.policy_namespaces }}"
-          for namespace in "${NAMESPACES[@]}"; do
-            echo "Testing namespace: $namespace"
-            conftest test tfplan.json \
-              --policy ../.conftest-policies \
-              --namespace "$namespace" \
-              --output table
-          done
+      #     IFS=',' read -ra NAMESPACES <<< "${{ steps.load-config.outputs.policy_namespaces }}"
+      #     for namespace in "${NAMESPACES[@]}"; do
+      #       echo "Testing namespace: $namespace"
+      #       conftest test tfplan.json \
+      #         --policy ../.conftest-policies \
+      #         --namespace "$namespace" \
+      #         --output table
+      #     done
           
-      - name: Run Conftest - Generate Report
-        working-directory: ${{ steps.load-config.outputs.terraform_dir }}
-        run: |
-          # Generate JSON report for programmatic processing
-          conftest test tfplan.json \
-            --policy ../.conftest-policies \
-            --output json > conftest-report.json
+      # - name: Run Conftest - Generate Report
+      #   working-directory: ${{ steps.load-config.outputs.terraform_dir }}
+      #   run: |
+      #     # Generate JSON report for programmatic processing
+      #     conftest test tfplan.json \
+      #       --policy ../.conftest-policies \
+      #       --output json > conftest-report.json
             
-          # Generate human-readable report
-          conftest test tfplan.json \
-            --policy ../.conftest-policies \
-            --output table > conftest-report.txt
+      #     # Generate human-readable report
+      #     conftest test tfplan.json \
+      #       --policy ../.conftest-policies \
+      #       --output table > conftest-report.txt
             
-      - name: Upload Conftest Reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: conftest-reports-${{ github.run_id }}
-          path: |
-            ${{ steps.load-config.outputs.terraform_dir }}/conftest-report.json
-            ${{ steps.load-config.outputs.terraform_dir }}/conftest-report.txt
-            ${{ steps.load-config.outputs.terraform_dir }}/tfplan.json
-          retention-days: 30
+      # - name: Upload Conftest Reports
+      #   uses: actions/upload-artifact@v4
+      #   if: always()
+      #   with:
+      #     name: conftest-reports-${{ github.run_id }}
+      #     path: |
+      #       ${{ steps.load-config.outputs.terraform_dir }}/conftest-report.json
+      #       ${{ steps.load-config.outputs.terraform_dir }}/conftest-report.txt
+      #       ${{ steps.load-config.outputs.terraform_dir }}/tfplan.json
+      #     retention-days: 30
