@@ -1,11 +1,13 @@
 name: SonarQube Scan
 on:
-  push:
+  pull_request:
     branches:
       - main
       - develop
-  pull_request:
-    types: [opened, synchronize, reopened]
+      - test
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
 jobs:
   sonarqube:
     name: SonarQube
